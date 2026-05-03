@@ -436,6 +436,22 @@ async function startApp(localStream) {
     $('peer-count').textContent = n > 1 ? `${n} чел.` : '';
   }
 
+  // ── Video playback helpers ────────────────────────────────────────────────
+  function tryPlay(video, label) {
+    if (!video.srcObject) return;
+    video.play().catch(e => dbg('vplay-err', label+' '+String(e)));
+  }
+
+  // Watchdog: every 4s re-play any paused remote video
+  setInterval(() => {
+    document.querySelectorAll('#video-grid .tile:not(.me) video').forEach(v => {
+      if (v.srcObject && v.paused) {
+        dbg('watchdog-resume', v.id);
+        tryPlay(v, v.id);
+      }
+    });
+  }, 4000);
+
   function addTile(uid, name, stream, isMe) {
     if ($('tile-'+uid)) return;
     const tile = document.createElement('div');
@@ -449,7 +465,17 @@ async function startApp(localStream) {
     if (isMe) video.muted = true; // avoid echo
     if (stream) {
       video.srcObject = stream;
-      if (!isMe) video.play().catch(e=>dbg('vplay-err',String(e)));
+      if (!isMe) tryPlay(video, uid.slice(0,6));
+    }
+
+    // Auto-resume if browser pauses unexpectedly (e.g. screen lock / bg)
+    if (!isMe) {
+      video.addEventListener('pause', () => {
+        if (video.srcObject && !video.srcObject.getTracks().every(t=>t.readyState==='ended')) {
+          dbg('pause-event-resume', uid.slice(0,6));
+          tryPlay(video, uid.slice(0,6));
+        }
+      });
     }
 
     const camOff = document.createElement('div');
@@ -657,9 +683,10 @@ async function startApp(localStream) {
         tile = $('tile-'+remoteUid);
       } else {
         const v = $('v-'+remoteUid);
-        if (v && v.srcObject !== stream) {
-          v.srcObject = stream;
-          v.play().catch(()=>{});
+        if (v) {
+          if (v.srcObject !== stream) v.srcObject = stream;
+          // Always try to play — stream object might be same but track replaced
+          tryPlay(v, remoteUid.slice(0,6));
         }
       }
       // Update cam-off state once we see video tracks
@@ -872,6 +899,10 @@ async function startApp(localStream) {
     if (document.visibilityState!=='visible') return;
     doHeartbeat(); setTimeout(doHeartbeat, 3000);
     if (audioCtx&&audioCtx.state==='suspended') audioCtx.resume().catch(()=>{});
+    // Re-play all paused video elements (mobile screen lock / bg tab)
+    document.querySelectorAll('video').forEach(v => {
+      if (v.srcObject && v.paused) { dbg('visibility-resume',v.id); tryPlay(v, v.id); }
+    });
     for (const [uid,{pc}] of Object.entries(peers)) {
       if ((pc.connectionState==='failed'||pc.connectionState==='disconnected')
           && pc.signalingState==='stable' && myUid<uid) {
