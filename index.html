@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>📹 Видеошки</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d0d1a; --card: #161628; --green: #00d46a;
+      --red: #ff3b30; --blue: #4a9eff; --text: #fff; --muted: #6b7280;
+    }
+    html, body {
+      height: 100%; background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      overflow: hidden; user-select: none; -webkit-user-select: none;
+    }
+
+    /* ── App shell ── */
+    #app {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      padding: 8px 8px 0 8px;
+      padding-bottom: max(8px, env(safe-area-inset-bottom));
+      gap: 6px;
+    }
+
+    /* ── Header ── */
+    .hd {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-shrink: 0; height: 34px;
+    }
+    .hd-left  { display: flex; align-items: center; gap: 7px; }
+    .hd-logo  { font-size: 1.15rem; line-height: 1; }
+    .hd-title { font-size: .92rem; font-weight: 700; cursor: default; }
+    .hd-room  {
+      background: rgba(74,158,255,.1); border: 1px solid rgba(74,158,255,.24);
+      color: var(--blue); font-size: .72rem; font-weight: 700;
+      letter-spacing: .1em; padding: 2px 10px; border-radius: 20px; cursor: pointer;
+      transition: background .15s;
+    }
+    .hd-room:active { background: rgba(74,158,255,.2); }
+    .hd-chint { font-size: .64rem; color: var(--green); opacity: 0; transition: opacity .3s; margin-left: 4px; }
+    .hd-chint.on { opacity: 1; }
+
+    /* ── Video grid ── */
+    #video-grid {
+      flex: 1; display: grid; gap: 6px; min-height: 0;
+    }
+    /* 1 person */
+    #video-grid.g1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+    /* 2 people — equal side by side */
+    #video-grid.g2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+    /* 3 people — 2 on top, 1 centered below */
+    #video-grid.g3 {
+      grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+    }
+    #video-grid.g3 .tile:nth-child(3) {
+      grid-column: 1 / -1;
+      width: 50%; justify-self: center;
+    }
+
+    /* Mobile: stack vertically */
+    @media (max-width: 600px) {
+      #video-grid.g2 { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+      #video-grid.g3 { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr 1fr; }
+      #video-grid.g3 .tile:nth-child(3) { grid-column: auto; width: 100%; }
+    }
+
+    /* ── Tile ── */
+    .tile {
+      position: relative; background: #111; border-radius: 12px;
+      overflow: hidden; border: 2.5px solid transparent;
+      transition: border-color .25s;
+    }
+    .tile.speaking { border-color: rgba(255,59,48,.7); }
+    .tile video {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+    }
+    /* Mirror own video */
+    .tile.me video { transform: scaleX(-1); }
+
+    /* Name badge */
+    .tile-name {
+      position: absolute; bottom: 8px; left: 8px;
+      background: rgba(0,0,0,.55); backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      color: #fff; font-size: .73rem; font-weight: 600;
+      padding: 3px 9px; border-radius: 20px; pointer-events: none;
+    }
+
+    /* Cam-off placeholder */
+    .tile-camoff {
+      position: absolute; inset: 0; display: none;
+      align-items: center; justify-content: center;
+      background: var(--card); font-size: 3.5rem; flex-direction: column; gap: 8px;
+    }
+    .tile-camoff span { font-size: .75rem; color: var(--muted); }
+    .tile.cam-off .tile-camoff { display: flex; }
+    .tile.cam-off video { visibility: hidden; }
+
+    /* ── Controls ── */
+    #controls {
+      display: flex; align-items: center; justify-content: center;
+      gap: 14px; flex-shrink: 0; padding: 6px 0 8px;
+    }
+    .ctrl-btn {
+      width: 54px; height: 54px; border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.1); background: var(--card);
+      color: #fff; font-size: 1.3rem; cursor: pointer;
+      outline: none; -webkit-tap-highlight-color: transparent;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .15s, border-color .15s, transform .1s;
+    }
+    .ctrl-btn:active { transform: scale(.88); }
+    .ctrl-btn.off   { background: rgba(255,59,48,.15); border-color: rgba(255,59,48,.4); }
+    .ctrl-btn.recording {
+      background: rgba(255,59,48,.25); border-color: var(--red);
+      animation: rec-pulse .85s ease-in-out infinite;
+    }
+    @keyframes rec-pulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(255,59,48,.45); }
+      50%      { box-shadow: 0 0 0 9px rgba(255,59,48,0); }
+    }
+    #leave-btn { background: var(--red); border-color: transparent; width: 58px; height: 58px; font-size: 1.4rem; }
+    #leave-btn:hover { background: #cc2e24; }
+
+    /* Record button hidden on touch devices */
+    #rec-btn { display: none; }
+    @media (hover: hover) and (pointer: fine) { #rec-btn { display: flex; } }
+
+    /* ── Splash ── */
+    #splash {
+      position: fixed; inset: 0; z-index: 3000; background: var(--bg);
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 10px;
+      cursor: pointer; -webkit-tap-highlight-color: transparent;
+      transition: opacity .35s ease; user-select: none; -webkit-user-select: none;
+    }
+    #splash.out { opacity: 0; pointer-events: none; }
+    .sp-logo  { font-size: 3rem; line-height: 1; }
+    .sp-title { font-size: 1.5rem; font-weight: 800; }
+    .sp-room-lbl   { color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .1em; margin-top: 8px; }
+    .sp-room-badge {
+      background: rgba(74,158,255,.1); border: 1px solid rgba(74,158,255,.24);
+      color: var(--blue); font-size: .85rem; font-weight: 700;
+      letter-spacing: .1em; padding: 3px 14px; border-radius: 20px;
+    }
+    .sp-btn {
+      margin-top: 24px; width: 148px; height: 148px; border-radius: 50%; border: none;
+      background: radial-gradient(circle at 38% 35%, #4a9eff, #1a6fd4);
+      box-shadow: 0 0 0 10px rgba(74,158,255,.08), 0 8px 32px rgba(74,158,255,.4),
+                  inset 0 2px 0 rgba(255,255,255,.2);
+      color: #fff; font-size: .95rem; font-weight: 800; letter-spacing: .14em;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 6px; pointer-events: none;
+      transition: transform .08s, box-shadow .08s;
+    }
+    #splash:active .sp-btn {
+      transform: scale(.93);
+      box-shadow: 0 0 0 10px rgba(74,158,255,.12), 0 4px 20px rgba(74,158,255,.3),
+                  inset 0 2px 0 rgba(255,255,255,.15);
+    }
+    .sp-hint { color: var(--muted); font-size: .72rem; margin-top: 10px; }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed; bottom: 90px; left: 50%;
+      transform: translateX(-50%) translateY(60px);
+      background: rgba(255,255,255,.12); backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,.1);
+      color: #fff; padding: 8px 16px; border-radius: 18px;
+      font-size: .8rem; transition: transform .3s;
+      pointer-events: none; white-space: nowrap; z-index: 5000;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+
+    /* ── Debug ── */
+    #dbg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.93); z-index: 9999; flex-direction: column; font-family: monospace; font-size: 11px; color: #ccc; }
+    #dbg.on { display: flex; }
+    #dbg-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid #222; flex-shrink: 0; }
+    #dbg-head span { color: #fff; font-size: 13px; font-weight: 700; }
+    #dbg-close, #dbg-copy, #dbg-clear { background: none; border: 1px solid #444; color: #aaa; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 11px; }
+    #dbg-body { flex: 1; overflow-y: auto; padding: 10px 14px; }
+    #dbg-log  { background: #0a0a14; border-radius: 8px; padding: 8px 10px; }
+    .dbg-entry { padding: 2px 0; border-bottom: 1px solid #111; }
+    .dbg-entry .t      { color: #444; margin-right: 5px; }
+    .dbg-entry .ev     { color: #7dd3fc; }
+    .dbg-entry .detail { color: #6b7280; }
+  </style>
+</head>
+<body>
+
+<div id="app">
+  <div class="hd">
+    <div class="hd-left">
+      <div class="hd-logo">📹</div>
+      <div class="hd-title">Видеошки</div>
+      <div style="display:flex;align-items:center;gap:5px;">
+        <span class="hd-rlbl" style="color:var(--muted);font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;">Комната</span>
+        <span class="hd-room" id="m-room">—</span>
+        <span class="hd-chint" id="m-chint">✓ скопировано</span>
+      </div>
+    </div>
+    <div id="peer-count" style="font-size:.72rem;color:var(--muted);"></div>
+  </div>
+
+  <div id="video-grid" class="g1"></div>
+
+  <div id="controls">
+    <button class="ctrl-btn" id="mic-btn"   title="Микрофон">🎤</button>
+    <button class="ctrl-btn" id="cam-btn"   title="Камера">📷</button>
+    <button class="ctrl-btn" id="rec-btn"   title="Запись">⏺</button>
+    <button class="ctrl-btn" id="leave-btn" title="Выйти">📞</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<div id="splash">
+  <div class="sp-logo">📹</div>
+  <div class="sp-title">Видеошки</div>
+  <div class="sp-room-lbl">Комната</div>
+  <div class="sp-room-badge" id="sp-room">—</div>
+  <div class="sp-btn">
+    <span style="font-size:1.9rem">📹</span>
+    <span>ВОЙТИ</span>
+  </div>
+  <div class="sp-hint">Нажми чтобы войти</div>
+</div>
+
+<div id="dbg">
+  <div id="dbg-head">
+    <span>🔧 Debug</span>
+    <div style="display:flex;gap:6px">
+      <button id="dbg-copy">Копировать</button>
+      <button id="dbg-clear">Сброс</button>
+      <button id="dbg-close">Закрыть</button>
+    </div>
+  </div>
+  <div id="dbg-body"><div id="dbg-log"></div></div>
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+const DB = 'https://racia-275ba-default-rtdb.europe-west1.firebasedatabase.app';
+const ICE_FALLBACK = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'turn:a.relay.metered.ca:80',              username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
+  { urls: 'turn:a.relay.metered.ca:443?transport=tcp', username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
+  { urls: 'turns:a.relay.metered.ca:443',             username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
+];
+let ICE_SERVERS = ICE_FALLBACK;
+async function loadIceServers() {
+  try {
+    const r = await fetch('https://annmiro.metered.live/api/v1/turn/credentials?apiKey=3441f7c12cc6972242a1364ddba767e06a7c');
+    const s = await r.json();
+    if (s && s.length) { ICE_SERVERS = s; dbg('TURN-api✓', s.length+' servers'); }
+  } catch(e) { dbg('TURN-api-fallback', String(e)); }
+}
+loadIceServers();
+
+// ── Funny names ───────────────────────────────────────────────────────────────
+const ADJ  = ['Быстрый','Лихой','Дерзкий','Крутой','Смелый','Дикий','Хитрый','Ловкий','Шустрый','Удалой','Бравый','Лютый','Сонный','Хмурый','Весёлый','Мощный','Пушистый','Звонкий','Ярый','Хрустящий'];
+const NOUN = ['Бобёр','Лось','Медведь','Заяц','Волк','Лиса','Бурундук','Сурок','Орёл','Сова','Ёж','Кабан','Рысь','Соболь','Снегирь','Зубр','Барсук','Суслик','Хомяк','Глухарь'];
+function funnyName() { return ADJ[Math.random()*ADJ.length|0]+' '+NOUN[Math.random()*NOUN.length|0]; }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+function toast(msg, dur=2500) {
+  const el=$('toast'); el.textContent=msg; el.classList.add('show');
+  clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('show'), dur);
+}
+
+function fbUrl(room,path) { return `${DB}/rooms/${room}/${path}.json`; }
+function fbPut(room,path,val)  { return fetch(fbUrl(room,path),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(val)}); }
+function fbDel(room,path)      { return fetch(fbUrl(room,path),{method:'DELETE'}); }
+function fbGet(room,path)      { return fetch(fbUrl(room,path)).then(r=>r.json()).catch(()=>null); }
+function fbListen(room,path,cb) {
+  let es, reconnTimer;
+  function connect() {
+    if (es) { try{es.close();}catch(_){} }
+    clearTimeout(reconnTimer);
+    es = new EventSource(fbUrl(room,path)+'?stream=true');
+    es.addEventListener('put', e => { const d=JSON.parse(e.data); cb(d.path,d.data); });
+    es.addEventListener('error', () => { reconnTimer=setTimeout(connect,2000); });
+    es.addEventListener('open',  () => dbg('SSE-open', path.slice(0,24)));
+  }
+  connect();
+  return { close: ()=>{ clearTimeout(reconnTimer); if(es) es.close(); } };
+}
+
+// ── Room ──────────────────────────────────────────────────────────────────────
+const P = new URLSearchParams(window.location.search);
+let room = P.get('room');
+if (!room) {
+  room = Math.random().toString(36).slice(2,8).toUpperCase();
+  const u = new URL(location.href); u.searchParams.set('room',room); history.replaceState({},'',u);
+}
+$('m-room').textContent = room;
+$('sp-room').textContent = room;
+
+$('m-room').addEventListener('click', () => {
+  navigator.clipboard.writeText(location.href).then(() => {
+    toast('Ссылка скопирована!');
+    $('m-chint').classList.add('on');
+    setTimeout(()=>$('m-chint').classList.remove('on'), 2200);
+  });
+});
+
+// ── Debug ─────────────────────────────────────────────────────────────────────
+const DEBUG_MODE = P.get('debug') === '1';
+let dbgLog = [];
+try { const s=sessionStorage.getItem('vchat_dbg'); if(s) dbgLog=JSON.parse(s); } catch(_){}
+const T0 = Date.now();
+function dbg(event, detail='') {
+  const sec = ((Date.now()-T0)/1000).toFixed(1);
+  dbgLog.unshift({sec,event,detail});
+  if (dbgLog.length>150) dbgLog.length=150;
+  try { sessionStorage.setItem('vchat_dbg', JSON.stringify(dbgLog.slice(0,150))); } catch(_){}
+  if ($('dbg').classList.contains('on')) renderDbg();
+}
+function renderDbg() {
+  $('dbg-log').innerHTML = dbgLog.map(e =>
+    `<div class="dbg-entry"><span class="t">${e.sec}s</span><span class="ev">${e.event}</span>${e.detail?' <span class="detail">'+e.detail+'</span>':''}</div>`
+  ).join('');
+}
+if (DEBUG_MODE) { $('dbg').classList.add('on'); setInterval(renderDbg,1000); }
+$('dbg-close').addEventListener('click', ()=>$('dbg').classList.remove('on'));
+$('dbg-clear').addEventListener('click', ()=>{ dbgLog.length=0; try{sessionStorage.removeItem('vchat_dbg');}catch(_){} renderDbg(); });
+$('dbg-copy').addEventListener('click', ()=>{
+  navigator.clipboard.writeText(dbgLog.map(e=>`${e.sec}s ${e.event} ${e.detail}`).join('\n'))
+    .then(()=>toast('Лог скопирован'));
+});
+let tapCount=0, tapTimer=0;
+document.querySelector('.hd-title').addEventListener('click', ()=>{
+  tapCount++; clearTimeout(tapTimer); tapTimer=setTimeout(()=>tapCount=0,800);
+  if (tapCount>=5) { tapCount=0; $('dbg').classList.toggle('on'); renderDbg(); setInterval(renderDbg,1000); }
+});
+
+// ── AudioContext ──────────────────────────────────────────────────────────────
+let audioCtx = null;
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  return audioCtx;
+}
+
+// ── Identity ──────────────────────────────────────────────────────────────────
+let myName = localStorage.getItem('vchat_name') || funnyName();
+localStorage.setItem('vchat_name', myName);
+const myUid = localStorage.getItem('vchat_uid') || Math.random().toString(36).slice(2,10);
+localStorage.setItem('vchat_uid', myUid);
+
+// ── Splash ────────────────────────────────────────────────────────────────────
+(function() {
+  const splash = $('splash');
+  if (DEBUG_MODE) { splash.style.display='none'; setTimeout(enterRoom,100); return; }
+  function onEnter(e) {
+    if (e.type==='touchend') e.preventDefault();
+    splash.removeEventListener('click',    onEnter);
+    splash.removeEventListener('touchend', onEnter);
+    enterRoom();
+  }
+  splash.addEventListener('click',    onEnter);
+  splash.addEventListener('touchend', onEnter);
+})();
+
+// ── Entry ─────────────────────────────────────────────────────────────────────
+async function enterRoom() {
+  try { getAudioCtx().resume(); } catch(_){}
+
+  // Check capacity (max 3 total)
+  try {
+    const users = await fbGet(room, 'users');
+    if (users) {
+      const active = Object.entries(users).filter(([uid,u]) =>
+        u && u.name && uid !== myUid && (Date.now() - (u.ts||0)) < 30000
+      );
+      if (active.length >= 3) {
+        toast('Комната полна — максимум 3 человека 🚫', 4000);
+        dbg('room-full', active.length+' users');
+        return;
+      }
+    }
+  } catch(e) { dbg('capacity-err', String(e)); }
+
+  // Request media
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+      video: { width:{ideal:1280}, height:{ideal:720}, facingMode:'user' }
+    });
+    dbg('media-ok', 'audio+video');
+  } catch(e) {
+    dbg('media-video-err', String(e));
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio:true, video:false });
+      toast('Камера недоступна, работаем без видео 🎙️');
+      dbg('media-ok', 'audio-only');
+    } catch(e2) {
+      toast('Нет доступа к микрофону 😢');
+      dbg('media-err', String(e2)); return;
+    }
+  }
+
+  // Hide splash
+  const splash = $('splash');
+  splash.classList.add('out');
+  setTimeout(()=>{ splash.style.display='none'; }, 380);
+
+  startApp(stream);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+async function startApp(localStream) {
+  const presence  = {};
+  const peers     = {};
+  const peerSids  = {};
+  const lastSeen  = {};
+  const SESSION_START = Date.now();
+
+  let micMuted = false;
+  let camMuted = false;
+  let isRecording = false;
+  let mediaRecorder = null;
+  let recordChunks  = [];
+  let drawInterval  = null;
+  let speakTimer    = null;
+  let isSpeaking    = false;
+
+  // ── Grid helpers ──────────────────────────────────────────────────────────
+  function updateGrid() {
+    const n = $('video-grid').querySelectorAll('.tile').length;
+    $('video-grid').className = 'g' + Math.min(Math.max(n,1),3);
+    $('peer-count').textContent = n > 1 ? `${n} чел.` : '';
+  }
+
+  function addTile(uid, name, stream, isMe) {
+    if ($('tile-'+uid)) return;
+    const tile = document.createElement('div');
+    tile.className = 'tile' + (isMe?' me':'');
+    tile.id = 'tile-'+uid;
+
+    const video = document.createElement('video');
+    video.id = 'v-'+uid;
+    video.autoplay = true; video.playsInline = true;
+    video.setAttribute('playsinline',''); video.setAttribute('webkit-playsinline','');
+    if (isMe) video.muted = true; // avoid echo
+    if (stream) {
+      video.srcObject = stream;
+      if (!isMe) video.play().catch(e=>dbg('vplay-err',String(e)));
+    }
+
+    const camOff = document.createElement('div');
+    camOff.className = 'tile-camoff';
+    camOff.innerHTML = '🙈<span>камера выключена</span>';
+
+    const badge = document.createElement('div');
+    badge.className = 'tile-name'; badge.id = 'badge-'+uid;
+    badge.textContent = name + (isMe ? ' (ты)' : '');
+
+    tile.append(video, camOff, badge);
+    $('video-grid').appendChild(tile);
+
+    // Show cam-off if no video track
+    if (!stream || stream.getVideoTracks().length===0) tile.classList.add('cam-off');
+
+    updateGrid();
+  }
+
+  function removeTile(uid) {
+    const t = $('tile-'+uid);
+    if (t) { t.remove(); updateGrid(); }
+  }
+
+  // ── Own tile ──────────────────────────────────────────────────────────────
+  addTile(myUid, myName, localStream, true);
+
+  // ── Speaking detector ─────────────────────────────────────────────────────
+  (function setupVAD() {
+    const tracks = localStream.getAudioTracks();
+    if (!tracks.length) return;
+    const ctx = getAudioCtx();
+    const src = ctx.createMediaStreamSource(localStream);
+    const ana = ctx.createAnalyser(); ana.fftSize=256;
+    src.connect(ana);
+    const buf = new Uint8Array(ana.frequencyBinCount);
+    function tick() {
+      if (!localStream.active) return;
+      ana.getByteFrequencyData(buf);
+      const avg = buf.reduce((a,b)=>a+b,0)/buf.length;
+      const speaking = avg > 14 && !micMuted;
+      if (speaking !== isSpeaking) {
+        isSpeaking = speaking;
+        const t = $('tile-'+myUid);
+        if (t) t.classList.toggle('speaking', speaking);
+        fbPut(room,'talking/'+myUid, speaking ? true : null);
+      }
+      requestAnimationFrame(tick);
+    }
+    tick();
+  })();
+
+  // ── Controls ──────────────────────────────────────────────────────────────
+  $('mic-btn').addEventListener('click', ()=>{
+    micMuted = !micMuted;
+    localStream.getAudioTracks().forEach(t=>t.enabled=!micMuted);
+    $('mic-btn').textContent = micMuted ? '🔇' : '🎤';
+    $('mic-btn').classList.toggle('off', micMuted);
+    toast(micMuted ? 'Микрофон выключен' : 'Микрофон включён');
+    dbg('mic', micMuted?'off':'on');
+  });
+
+  $('cam-btn').addEventListener('click', ()=>{
+    camMuted = !camMuted;
+    localStream.getVideoTracks().forEach(t=>t.enabled=!camMuted);
+    $('cam-btn').textContent = camMuted ? '🚫' : '📷';
+    $('cam-btn').classList.toggle('off', camMuted);
+    const tile = $('tile-'+myUid);
+    if (tile) tile.classList.toggle('cam-off', camMuted);
+    toast(camMuted ? 'Камера выключена' : 'Камера включена');
+    dbg('cam', camMuted?'off':'on');
+  });
+
+  $('rec-btn').addEventListener('click', ()=>{
+    if (isRecording) stopRecording(); else startRecording();
+  });
+
+  $('leave-btn').addEventListener('click', ()=>{
+    if (confirm('Выйти из комнаты?')) leaveRoom();
+  });
+
+  function leaveRoom() {
+    if (isRecording) stopRecording();
+    localStream.getTracks().forEach(t=>t.stop());
+    Object.keys(peers).forEach(dropPeer);
+    onLeave();
+    location.reload();
+  }
+
+  // ── Recording (desktop only) ──────────────────────────────────────────────
+  function startRecording() {
+    const canvas = document.createElement('canvas');
+    canvas.width=1280; canvas.height=720;
+    const c2d = canvas.getContext('2d');
+
+    function drawFrame() {
+      const tiles = Array.from($('video-grid').querySelectorAll('.tile'));
+      const n = tiles.length;
+      c2d.fillStyle='#0d0d1a'; c2d.fillRect(0,0,1280,720);
+      if (!n) return;
+
+      const drawV = (tile,x,y,w,h) => {
+        const v=tile.querySelector('video');
+        if (v && v.readyState>=2) {
+          c2d.save();
+          if (tile.classList.contains('me')) {
+            // mirror own video
+            c2d.translate(x+w,y); c2d.scale(-1,1);
+            c2d.drawImage(v,0,0,w,h);
+          } else {
+            c2d.drawImage(v,x,y,w,h);
+          }
+          c2d.restore();
+        } else {
+          c2d.fillStyle='#161628'; c2d.fillRect(x,y,w,h);
+          c2d.fillStyle='#6b7280'; c2d.font='48px sans-serif';
+          c2d.textAlign='center'; c2d.textBaseline='middle';
+          c2d.fillText('🙈',x+w/2,y+h/2);
+        }
+      };
+
+      if      (n===1) drawV(tiles[0],0,0,1280,720);
+      else if (n===2) { drawV(tiles[0],0,0,640,720); drawV(tiles[1],640,0,640,720); }
+      else            { drawV(tiles[0],0,0,640,360); drawV(tiles[1],640,0,640,360); drawV(tiles[2],320,360,640,360); }
+    }
+    drawInterval = setInterval(drawFrame, 33);
+
+    // Mix audio: local + all remotes
+    const actx = getAudioCtx();
+    const dest = actx.createMediaStreamDestination();
+    try {
+      const lsrc = actx.createMediaStreamSource(localStream);
+      lsrc.connect(dest);
+    } catch(_){}
+    for (const uid of Object.keys(peers)) {
+      const el = $('v-'+uid);
+      if (el && el.srcObject) {
+        try { actx.createMediaStreamSource(el.srcObject).connect(dest); } catch(_){}
+      }
+    }
+
+    const vTrack = canvas.captureStream(30).getVideoTracks()[0];
+    const aTrack = dest.stream.getAudioTracks()[0];
+    const combined = new MediaStream([vTrack, aTrack].filter(Boolean));
+
+    const mime = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm']
+      .find(m=>MediaRecorder.isTypeSupported(m)) || 'video/webm';
+
+    recordChunks = [];
+    mediaRecorder = new MediaRecorder(combined, {mimeType:mime});
+    mediaRecorder.ondataavailable = e=>{ if(e.data.size>0) recordChunks.push(e.data); };
+    mediaRecorder.onstop = ()=>{
+      clearInterval(drawInterval); drawInterval=null;
+      const blob = new Blob(recordChunks, {type:'video/webm'});
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href=url; a.download=`videochat-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.webm`;
+      a.click();
+      setTimeout(()=>URL.revokeObjectURL(url), 5000);
+      toast('✅ Запись сохранена!');
+      dbg('rec-saved', recordChunks.length+' chunks');
+    };
+    mediaRecorder.start(1000);
+    isRecording=true;
+    $('rec-btn').classList.add('recording'); $('rec-btn').textContent='⏹';
+    toast('⏺ Запись началась');
+    dbg('rec-start', mime);
+  }
+
+  function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state!=='inactive') mediaRecorder.stop();
+    isRecording=false;
+    $('rec-btn').classList.remove('recording'); $('rec-btn').textContent='⏺';
+    dbg('rec-stop','');
+  }
+
+  // ── WebRTC ────────────────────────────────────────────────────────────────
+  async function makePC(remoteUid) {
+    if (peers[remoteUid]) return peers[remoteUid].pc;
+    const pc = new RTCPeerConnection({iceServers:ICE_SERVERS});
+    peers[remoteUid] = {pc, iceTx:0, offerSentAt:0, disconnectTimer:null};
+
+    // Add all local tracks
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+    // Incoming tracks → update tile
+    const incomingStreams = {};
+    pc.ontrack = ({track, streams}) => {
+      dbg('ontrack', remoteUid.slice(0,6)+' kind='+track.kind);
+      const stream = (streams&&streams[0]) ? streams[0] : (incomingStreams[remoteUid]||(incomingStreams[remoteUid]=new MediaStream()));
+      incomingStreams[remoteUid] = stream;
+      if (!(streams&&streams[0]) && !stream.getTracks().includes(track)) stream.addTrack(track);
+
+      let tile = $('tile-'+remoteUid);
+      if (!tile) {
+        const pName = (presence[remoteUid]&&presence[remoteUid].name)||'???';
+        addTile(remoteUid, pName, stream, false);
+        tile = $('tile-'+remoteUid);
+      } else {
+        const v = $('v-'+remoteUid);
+        if (v && v.srcObject !== stream) {
+          v.srcObject = stream;
+          v.play().catch(()=>{});
+        }
+      }
+      // Update cam-off state once we see video tracks
+      if (tile && track.kind==='video') tile.classList.remove('cam-off');
+    };
+
+    pc.onicecandidate = ({candidate})=>{
+      if (!candidate) return;
+      if (candidate.type==='relay') dbg('ICE-relay✓',candidate.address);
+      const idx = peers[remoteUid].iceTx++;
+      fbPut(room,'ice/'+myUid+'/'+remoteUid+'/'+idx, candidate.toJSON());
+    };
+
+    pc.oniceconnectionstatechange = ()=>dbg('ICE→'+pc.iceConnectionState, remoteUid.slice(0,6));
+
+    pc.onconnectionstatechange = async ()=>{
+      dbg('conn→'+pc.connectionState, remoteUid.slice(0,6));
+      const p = peers[remoteUid]; if (!p) return;
+      if (p.disconnectTimer) { clearTimeout(p.disconnectTimer); p.disconnectTimer=null; }
+
+      if (pc.connectionState==='failed') {
+        if (myUid<remoteUid && pc.signalingState==='stable') {
+          try {
+            const o=await pc.createOffer({iceRestart:true}); await pc.setLocalDescription(o);
+            fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:o.sdp,ts:Date.now()});
+          } catch(e) { dropPeer(remoteUid); if(presence[remoteUid]&&myUid<remoteUid) sendOffer(remoteUid); }
+        } else {
+          dropPeer(remoteUid); if(presence[remoteUid]&&myUid<remoteUid) sendOffer(remoteUid);
+        }
+      } else if (pc.connectionState==='disconnected') {
+        p.disconnectTimer = setTimeout(async ()=>{
+          const pp=peers[remoteUid]; if (!pp||pp.pc!==pc) return;
+          if (pc.connectionState!=='disconnected'&&pc.connectionState!=='failed') return;
+          if (myUid<remoteUid && pc.signalingState==='stable') {
+            try {
+              const o=await pc.createOffer({iceRestart:true}); await pc.setLocalDescription(o);
+              fbPut(room,'signals/'+remoteUid+'/'+myUid,{type:'offer',sdp:o.sdp,ts:Date.now()});
+              pp.offerSentAt=Date.now();
+            } catch(e) { dropPeer(remoteUid); if(presence[remoteUid]) sendOffer(remoteUid); }
+          } else {
+            dropPeer(remoteUid); if(presence[remoteUid]&&myUid<remoteUid) sendOffer(remoteUid);
+          }
+        }, 2000);
+      }
+    };
+
+    // ICE candidates from remote
+    fbListen(room,'ice/'+remoteUid+'/'+myUid,(path,data)=>{
+      if (path==='/') { if(data) Object.values(data).forEach(c=>pc.addIceCandidate(new RTCIceCandidate(c)).catch(()=>{})); return; }
+      if (data) pc.addIceCandidate(new RTCIceCandidate(data)).catch(()=>{});
+    });
+
+    // DataChannel keepalive
+    const kaSetup = dc=>{
+      let ki=null;
+      dc.onopen  = ()=>{ ki=setInterval(()=>{ if(dc.readyState==='open') try{dc.send('k');}catch(_){} },8000); dbg('ka-open',remoteUid.slice(0,6)); };
+      dc.onclose = ()=>{ if(ki){clearInterval(ki);ki=null;} };
+    };
+    if (myUid<remoteUid) kaSetup(pc.createDataChannel('ka'));
+    else pc.ondatachannel=({channel})=>kaSetup(channel);
+
+    return pc;
+  }
+
+  async function sendOffer(remoteUid) {
+    dbg('sendOffer→', remoteUid.slice(0,6));
+    const pc = await makePC(remoteUid);
+    peers[remoteUid].offerSentAt = Date.now();
+    const offer = await pc.createOffer();
+    const sdp = offer.sdp
+      .replace(/\r\na=sendonly/g,'\r\na=sendrecv')
+      .replace(/\r\na=inactive/g,'\r\na=sendrecv');
+    await pc.setLocalDescription({type:'offer',sdp});
+    fbPut(room,'signals/'+remoteUid+'/'+myUid, {type:'offer',sdp,ts:Date.now()});
+  }
+
+  async function handleOffer(remoteUid, data) {
+    if (data.ts && (Date.now()-data.ts>90000 || data.ts<SESSION_START-5000)) {
+      dbg('offer-stale', remoteUid.slice(0,6)+'  age='+Math.round((Date.now()-data.ts)/1000)+'s'); return;
+    }
+    if (myUid<remoteUid) { dbg('offer-ignored offerer-role',remoteUid.slice(0,6)); return; }
+    const ep = peers[remoteUid];
+    if (ep) {
+      const ice=ep.pc.iceConnectionState;
+      if (ice==='connected'||ice==='completed') { dbg('offer-ignored ice='+ice,remoteUid.slice(0,6)); return; }
+    }
+    dbg('handleOffer←', remoteUid.slice(0,6));
+    const pc = await makePC(remoteUid);
+    try {
+      if (pc.signalingState==='have-local-offer') await pc.setLocalDescription({type:'rollback'});
+      if (pc.signalingState!=='stable') { dbg('offer-skip sig='+pc.signalingState,remoteUid.slice(0,6)); return; }
+      await pc.setRemoteDescription(new RTCSessionDescription(data));
+      const ans = await pc.createAnswer();
+      const sdp = ans.sdp
+        .replace(/\r\na=recvonly/g,'\r\na=sendrecv')
+        .replace(/\r\na=inactive/g,'\r\na=sendrecv');
+      await pc.setLocalDescription({type:'answer',sdp});
+      fbPut(room,'signals/'+remoteUid+'/'+myUid, {type:'answer',sdp,ts:Date.now()});
+      dbg('answer→sent', remoteUid.slice(0,6));
+    } catch(e) { dbg('handleOffer-ERR', String(e)); }
+  }
+
+  async function handleAnswer(remoteUid, data) {
+    if (data.ts && (Date.now()-data.ts>90000 || data.ts<SESSION_START-5000)) return;
+    const p=peers[remoteUid];
+    if (!p||p.pc.signalingState==='stable') return;
+    try { await p.pc.setRemoteDescription(new RTCSessionDescription(data)); dbg('answer-applied',remoteUid.slice(0,6)); }
+    catch(e) { dbg('handleAnswer-ERR',String(e)); }
+  }
+
+  function dropPeer(uid) {
+    const p=peers[uid];
+    if (p) {
+      if (p.disconnectTimer) clearTimeout(p.disconnectTimer);
+      try{p.pc.close();}catch(_){}
+      delete peers[uid];
+    }
+    removeTile(uid);
+    dbg('dropPeer', uid.slice(0,6));
+  }
+
+  // ── Presence ──────────────────────────────────────────────────────────────
+  presence[myUid] = {name:myName, speaking:false};
+  await Promise.all([
+    fbDel(room,'signals/'+myUid),
+    fbDel(room,'ice/'+myUid),
+    fbDel(room,'talking/'+myUid),
+  ]).catch(()=>{});
+  fbPut(room,'users/'+myUid, {name:myName, ts:Date.now(), sid:SESSION_START});
+
+  function onLeave() {
+    fetch(fbUrl(room,'users/'+myUid),  {method:'DELETE',keepalive:true});
+    fetch(fbUrl(room,'talking/'+myUid),{method:'DELETE',keepalive:true});
+  }
+  window.addEventListener('beforeunload', onLeave);
+  window.addEventListener('pagehide',     onLeave);
+
+  const doHeartbeat = ()=>fbPut(room,'users/'+myUid,{name:myName,ts:Date.now(),sid:SESSION_START});
+  setInterval(doHeartbeat, 8000);
+
+  // Stale peer cleanup
+  setInterval(()=>{
+    const now=Date.now(); let changed=false;
+    Object.keys(lastSeen).forEach(uid=>{
+      if (now-lastSeen[uid]>28000) {
+        fbDel(room,'users/'+uid); fbDel(room,'talking/'+uid);
+        delete presence[uid]; delete peerSids[uid]; delete lastSeen[uid];
+        dropPeer(uid); changed=true;
+      }
+    });
+  }, 8000);
+
+  // ── Firebase listeners ────────────────────────────────────────────────────
+  fbListen(room,'users',(path,data)=>{
+    const proc=(uid,d)=>{
+      if (uid===myUid) return;
+      if (!d||!d.name) {
+        delete presence[uid]; delete peerSids[uid]; dropPeer(uid); return;
+      }
+      const isStale    = d.sid && peerSids[uid] && d.sid < peerSids[uid];
+      if (isStale) { dbg('stale-ignored',uid.slice(0,6)); return; }
+      const sidChanged = d.sid && peerSids[uid] && d.sid > peerSids[uid];
+      if (sidChanged) { dropPeer(uid); delete presence[uid]; }
+      if (d.sid) peerSids[uid]=d.sid;
+      lastSeen[uid]=Date.now();
+
+      if (!presence[uid]) {
+        presence[uid]={name:d.name,speaking:false};
+        if (myUid<uid) sendOffer(uid);
+      } else {
+        presence[uid].name=d.name;
+        const b=$('badge-'+uid); if(b) b.textContent=d.name;
+        if (myUid<uid) {
+          if (!peers[uid]) { sendOffer(uid); }
+          else {
+            const age=Date.now()-(peers[uid].offerSentAt||0);
+            if (peers[uid].pc.signalingState==='have-local-offer' && age>8000) {
+              dropPeer(uid); presence[uid]={name:d.name,speaking:false}; sendOffer(uid);
+            }
+          }
+        }
+      }
+    };
+    if (path==='/') { if(data) Object.entries(data).forEach(([uid,d])=>proc(uid,d)); }
+    else proc(path.slice(1),data);
+  });
+
+  fbListen(room,'signals/'+myUid,(path,data)=>{
+    const proc=(fromUid,sig)=>{
+      if(!sig) return;
+      if (sig.type==='offer')  handleOffer(fromUid,sig);
+      if (sig.type==='answer') handleAnswer(fromUid,sig);
+    };
+    if (path==='/') { if(data) Object.entries(data).forEach(([uid,s])=>proc(uid,s)); }
+    else proc(path.slice(1),data);
+  });
+
+  fbListen(room,'talking',(path,data)=>{
+    const proc=(uid,val)=>{
+      if (uid===myUid) return;
+      if (presence[uid]) presence[uid].speaking=!!val;
+      const t=$('tile-'+uid); if(t) t.classList.toggle('speaking',!!val);
+    };
+    if (path==='/') { if(data) Object.entries(data).forEach(([uid,v])=>proc(uid,v)); }
+    else proc(path.slice(1),data);
+  });
+
+  // ── Visibility recovery ───────────────────────────────────────────────────
+  document.addEventListener('visibilitychange', async ()=>{
+    if (document.visibilityState!=='visible') return;
+    doHeartbeat(); setTimeout(doHeartbeat, 3000);
+    if (audioCtx&&audioCtx.state==='suspended') audioCtx.resume().catch(()=>{});
+    for (const [uid,{pc}] of Object.entries(peers)) {
+      if ((pc.connectionState==='failed'||pc.connectionState==='disconnected')
+          && pc.signalingState==='stable' && myUid<uid) {
+        try {
+          const o=await pc.createOffer({iceRestart:true}); await pc.setLocalDescription(o);
+          fbPut(room,'signals/'+uid+'/'+myUid,{type:'offer',sdp:o.sdp,ts:Date.now()});
+        } catch(e){}
+      }
+    }
+  });
+
+  dbg('app-started','uid='+myUid.slice(0,6)+' room='+room);
+}
+</script>
+</body>
+</html>
