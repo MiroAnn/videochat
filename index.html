@@ -129,9 +129,8 @@
     #rec-btn { display: none; }
     @media (hover: hover) and (pointer: fine) { #rec-btn { display: flex; } }
 
-    /* Flip camera button — mobile only */
+    /* Flip camera button — shown via JS only on real touch devices */
     #flip-btn { display: none; }
-    @media (hover: none) and (pointer: coarse) { #flip-btn { display: flex; } }
 
     /* ── Focus / PiP mode ── */
     /* Tap a tile to focus it; others shrink to PiP corners */
@@ -245,7 +244,7 @@
   <div id="controls">
     <button class="ctrl-btn" id="mic-btn"   title="Микрофон">🎤</button>
     <button class="ctrl-btn" id="cam-btn"   title="Камера">📷</button>
-    <button class="ctrl-btn" id="flip-btn"  title="Перевернуть камеру">🔄</button>
+    <button class="ctrl-btn" id="flip-btn"  title="Перевернуть камеру" style="display:none">🔄</button>
     <button class="ctrl-btn" id="rec-btn"   title="Запись">⏺</button>
     <button class="ctrl-btn" id="leave-btn" title="Выйти">📞</button>
   </div>
@@ -645,7 +644,18 @@ async function startApp(localStream) {
     dbg('cam', camMuted?'off':'on');
   });
 
-  // ── Flip camera (mobile) ──────────────────────────────────────────────────
+  // ── Flip camera (mobile only) ─────────────────────────────────────────────
+  // Show flip button only on real touch devices with multiple cameras
+  if (navigator.maxTouchPoints > 0) {
+    navigator.mediaDevices.enumerateDevices().then(devices => {
+      const cams = devices.filter(d => d.kind === 'videoinput');
+      if (cams.length > 1) $('flip-btn').style.display = 'flex';
+    }).catch(() => {
+      // Fallback: show if touch device
+      $('flip-btn').style.display = 'flex';
+    });
+  }
+
   $('flip-btn').addEventListener('click', async () => {
     if (isFlipping) return;
     isFlipping = true;
@@ -1008,7 +1018,6 @@ async function startApp(localStream) {
       if (!presence[uid]) {
         presence[uid]={name:d.name,speaking:false};
         playJoinSound();
-        toast(`${d.name} вошёл в комнату`);
         if (myUid<uid) sendOffer(uid);
       } else {
         presence[uid].name=d.name;
