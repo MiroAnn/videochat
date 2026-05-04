@@ -629,7 +629,6 @@ async function startApp(localStream) {
     localStream.getAudioTracks().forEach(t=>t.enabled=!micMuted);
     $('mic-btn').textContent = micMuted ? '🔇' : '🎤';
     $('mic-btn').classList.toggle('off', micMuted);
-    toast(micMuted ? 'Микрофон выключен' : 'Микрофон включён');
     dbg('mic', micMuted?'off':'on');
   });
 
@@ -640,7 +639,6 @@ async function startApp(localStream) {
     $('cam-btn').classList.toggle('off', camMuted);
     const tile = $('tile-'+myUid);
     if (tile) tile.classList.toggle('cam-off', camMuted);
-    toast(camMuted ? 'Камера выключена' : 'Камера включена');
     dbg('cam', camMuted?'off':'on');
   });
 
