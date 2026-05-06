@@ -281,9 +281,13 @@
 const DB = 'https://racia-275ba-default-rtdb.europe-west1.firebasedatabase.app';
 const ICE_FALLBACK = [
   { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'turn:a.relay.metered.ca:80',              username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun4.l.google.com:19302' },
+  { urls: 'turn:a.relay.metered.ca:80',               username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
   { urls: 'turn:a.relay.metered.ca:443?transport=tcp', username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
-  { urls: 'turns:a.relay.metered.ca:443',             username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
+  { urls: 'turns:a.relay.metered.ca:443',              username:'487b1823f1e0ce14f1f2b901', credential:'ehdRPgYE8003rQWu' },
 ];
 let ICE_SERVERS = ICE_FALLBACK;
 async function loadIceServers() {
@@ -346,7 +350,13 @@ $('m-room').addEventListener('click', () => {
 // ── Debug ─────────────────────────────────────────────────────────────────────
 const DEBUG_MODE = P.get('debug') === '1';
 let dbgLog = [];
-try { const s=sessionStorage.getItem('vchat_dbg'); if(s) dbgLog=JSON.parse(s); } catch(_){}
+try {
+  const s=sessionStorage.getItem('vchat_dbg');
+  if(s) {
+    dbgLog=JSON.parse(s);
+    dbgLog.unshift({sec:'———', event:'PAGE-RELOAD', detail: new Date().toLocaleTimeString()});
+  }
+} catch(_){}
 const T0 = Date.now();
 function dbg(event, detail='') {
   const sec = ((Date.now()-T0)/1000).toFixed(1);
@@ -514,7 +524,22 @@ async function startApp(localStream) {
   // ── Video playback helpers ────────────────────────────────────────────────
   function tryPlay(video, label) {
     if (!video.srcObject) return;
-    video.play().catch(e => dbg('vplay-err', label+' '+String(e)));
+    if (!document.contains(video)) return; // element removed from DOM — skip
+    video.play().catch(e => {
+      const msg = String(e);
+      if (msg.includes('AbortError')) {
+        // Element was removed mid-play — normal during reconnect, no retry needed
+        dbg('vplay-abort', label);
+        return;
+      }
+      dbg('vplay-err', label+' '+msg);
+      // For other errors (NotAllowedError etc.) — retry once after 800ms
+      setTimeout(() => {
+        if (document.contains(video) && video.srcObject) {
+          video.play().catch(e2 => dbg('vplay-retry-err', label+' '+String(e2)));
+        }
+      }, 800);
+    });
   }
 
   // Watchdog: every 4s re-play any paused remote video
@@ -822,7 +847,11 @@ async function startApp(localStream) {
   // ── WebRTC ────────────────────────────────────────────────────────────────
   async function makePC(remoteUid) {
     if (peers[remoteUid]) return peers[remoteUid].pc;
-    const pc = new RTCPeerConnection({iceServers:ICE_SERVERS});
+    const pc = new RTCPeerConnection({
+      iceServers: ICE_SERVERS,
+      iceCandidatePoolSize: 10,   // pre-gather candidates before offer — reduces delay
+      bundlePolicy: 'max-bundle', // audio+video on one transport, fewer negotiations
+    });
     peers[remoteUid] = {pc, iceTx:0, offerSentAt:0, disconnectTimer:null};
 
     // Add all local tracks
@@ -851,6 +880,21 @@ async function startApp(localStream) {
       }
       // Update cam-off state once we see video tracks
       if (tile && track.kind==='video') tile.classList.remove('cam-off');
+
+      // Separate <audio> element as backup for audio track —
+      // some browsers block autoplay with audio in <video> but allow <audio>
+      if (track.kind === 'audio') {
+        let ael = document.getElementById('aud-'+remoteUid);
+        if (!ael) {
+          ael = document.createElement('audio');
+          ael.id = 'aud-'+remoteUid;
+          ael.autoplay = true;
+          ael.setAttribute('playsinline','');
+          document.body.appendChild(ael);
+        }
+        if (ael.srcObject !== stream) ael.srcObject = stream;
+        ael.play().catch(()=>{});
+      }
     };
 
     pc.onicecandidate = ({candidate})=>{
@@ -911,14 +955,35 @@ async function startApp(localStream) {
     return pc;
   }
 
+  // Patch Opus in SDP: enable FEC (packet loss recovery) + lower latency
+  function patchSdp(sdp) {
+    // Fix direction
+    sdp = sdp
+      .replace(/\r\na=sendonly/g, '\r\na=sendrecv')
+      .replace(/\r\na=recvonly/g, '\r\na=sendrecv')
+      .replace(/\r\na=inactive/g, '\r\na=sendrecv');
+    // Find Opus payload type and add/replace fmtp line
+    sdp = sdp.replace(
+      /a=rtpmap:(\d+) opus\/48000\/2\r\n/g,
+      (match, pt) => {
+        // Remove existing fmtp for this pt if any
+        const fmtpRe = new RegExp(`a=fmtp:${pt} [^\r\n]+\r\n`,'g');
+        sdp = sdp.replace(fmtpRe, '');
+        // useinbandfec=1 — FEC, recovers lost packets (fixes crackling on relay)
+        // minptime=10    — 10ms frames, lower latency
+        // maxaveragebitrate=64000 — 64kbps, better quality
+        return match + `a=fmtp:${pt} minptime=10;useinbandfec=1;maxaveragebitrate=64000\r\n`;
+      }
+    );
+    return sdp;
+  }
+
   async function sendOffer(remoteUid) {
     dbg('sendOffer→', remoteUid.slice(0,6));
     const pc = await makePC(remoteUid);
     peers[remoteUid].offerSentAt = Date.now();
     const offer = await pc.createOffer();
-    const sdp = offer.sdp
-      .replace(/\r\na=sendonly/g,'\r\na=sendrecv')
-      .replace(/\r\na=inactive/g,'\r\na=sendrecv');
+    const sdp = patchSdp(offer.sdp);
     await pc.setLocalDescription({type:'offer',sdp});
     fbPut(room,'signals/'+remoteUid+'/'+myUid, {type:'offer',sdp,ts:Date.now()});
   }
@@ -940,9 +1005,7 @@ async function startApp(localStream) {
       if (pc.signalingState!=='stable') { dbg('offer-skip sig='+pc.signalingState,remoteUid.slice(0,6)); return; }
       await pc.setRemoteDescription(new RTCSessionDescription(data));
       const ans = await pc.createAnswer();
-      const sdp = ans.sdp
-        .replace(/\r\na=recvonly/g,'\r\na=sendrecv')
-        .replace(/\r\na=inactive/g,'\r\na=sendrecv');
+      const sdp = patchSdp(ans.sdp);
       await pc.setLocalDescription({type:'answer',sdp});
       fbPut(room,'signals/'+remoteUid+'/'+myUid, {type:'answer',sdp,ts:Date.now()});
       dbg('answer→sent', remoteUid.slice(0,6));
@@ -965,6 +1028,9 @@ async function startApp(localStream) {
       delete peers[uid];
     }
     removeTile(uid);
+    // Clean up backup audio element
+    const ael = document.getElementById('aud-'+uid);
+    if (ael) { ael.srcObject=null; ael.remove(); }
     dbg('dropPeer', uid.slice(0,6));
   }
 
